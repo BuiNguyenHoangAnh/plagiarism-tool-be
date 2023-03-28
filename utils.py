@@ -1,105 +1,184 @@
-import re
+#import thư viện
+import imp
+from operator import truediv
+import re, io, os, nltk
+
+from docx import *
+
+from pdfminer.pdfinterp import PDFResourceManager
+from pdfminer.layout import LAParams
+from pdfminer.converter import TextConverter
+from pdfminer.pdfinterp import PDFPageInterpreter
+from pdfminer.pdfpage import PDFPage
+
+from nltk.corpus import stopwords
 import nltk
-import numpy as np 
-import pandas as pd
-# import seaborn as sns # vừa đếm sô lượng vừa vẽ lên biểu đồ
-# import Levenshtein # Đo khoảng cách giữa 2 string (độ tương đồng)
-# from matplotlib import pyplot as plt # vẽ biểu đồ
-# from matplotlib_venn import venn2 # vẽ biểu đồ nhưng là dạng tròn
-from nltk.corpus import stopwords # các stopwords (the, or, and, ...)
-from nltk.stem.snowball import SnowballStemmer # kỹ thuật stemmer đưa về từ gốc
-from nltk.stem import WordNetLemmatizer # kỹ thuật Lemmatizer đưa về từ gốc
-stemmer = SnowballStemmer('english') # stemer với ngôn ngữ là tiếng anh
-nltk.download('wordnet') # dowload bộ từ điển cho Lemmatizer
-nltk.download('stopwords') # dowload bộ các stopwords
-stop_words = set(stopwords.words('english')) # các stopwords là tiếng anh 
+# nltk.download('stopwords')
+from nltk.tokenize import word_tokenize
+
+# https://github.com/Sudo-VP/Vietnamese-Word-Segmentation-Python
+from vws.RDRSegmenter import RDRSegmenter
+from vws.Tokenizer import Tokenizer
+
+# khia báo hằng
+STOPWORD_PATH = "vietnamese-stopwords-dash.txt"
+
+################
+# ĐỌC TÀI LIỆU #
+################
+
+# đọc từ file .txt
+def read_txt_file(path):
+    f = open(path, "r", encoding="utf8")
+    document = f.read().lower()
+    f.close()
+    return document
+
+def read_txt_files(path):
+    dirs = os.listdir( path )
+
+    data = []
+
+    for file in dirs:
+        if file == '.DS_Store':
+                continue
+        path_to_file=path+'/'
+        file_name = file
+        path_to_file += file_name
+        # with open(path_to_file, 'r', encoding = 'latin1') as f: #eng
+        with open(path_to_file, 'r', encoding = 'utf8') as f: #vie
+            mylist = f.read()
+            sent_tokenize_list = nltk.sent_tokenize(mylist)
+            temp = []
+            for i in sent_tokenize_list:
+                sent = i.lower()
+                sent = re.sub('[^A-Za-z0-9]+', ' ', sent)
+                temp.append(sent)
+            mylist = re.sub(r"\n", "", mylist)
+            data.append(mylist)
+    return data
+
+# đọc từ file word
+def read_doc_files(path):
+    document = Document(path)
+    text = []
+    for docpara in document.paragraphs:
+        text.append(docpara.text)
+    return text[0]
+
+# đọc từ file pdf
+def read_pdf_files(path):
+    with open(path, 'rb') as fp:
+        rsrcmgr = PDFResourceManager()
+        outfp = io.StringIO()
+        laparams = LAParams()
+        device = TextConverter(rsrcmgr, outfp, laparams=laparams)
+        interpreter = PDFPageInterpreter(rsrcmgr, device)
+        for page in PDFPage.get_pages(fp):
+            interpreter.process_page(page)
+    text = outfp.getvalue()
+    return text
+
+# đọc từ file xls
+# def read_xls_files():
+    # import pandas as pd
+    # xl = pd.ExcelFile("corpus_final.xls")
+
+    # df = xl.parse("File list")
+
+    # c = df[['File','Category']]
+    # print (c)
+
+##############
+# TIỀN XỬ LÝ #
+##############
+
+# tách từ (word segmentation)
+def  word_segmentation(document):
+    rdrsegment = RDRSegmenter()
+    tokenizer = Tokenizer()
+    doc = rdrsegment.segmentRawSentences(tokenizer, document)
+    print("word segmentation: ", doc)
+    return doc
+
+# loại bỏ ký tự đặc biệt
+def remove_punctuation_marks(document):
+    doc = re.sub(r"\W", " ", document)
+    print("remove punctuation marks: ", doc)
+    return doc
+
+# loại bỏ hư từ (stop word) (từ điển stop word: https://github.com/stopwords/vietnamese-stopwords)
+def load_stop_words():
+    stop_word_list = []
+    with open(STOPWORD_PATH, encoding="utf8") as stop_words:
+        for line in stop_words:
+            word = re.sub(r"\n", "", line)
+            stop_word_list.append(word)
+    return stop_word_list
+
+def remove_stop_words(document):
+    stop_word_list = load_stop_words()
+    doc = document
+    # for word in document.split():
+        # for stop_word in stop_word_list:
+        # if word in stop_word_list:
+        #     doc = doc.replace(word, "")
+    words = [w for w in document.split() if not w in stop_word_list]
+    doc = ' '.join(words)
+    print("remove stop words: ", doc)
+    return doc
+
+#loại bỏ số
+def remove_numbers(document):
+    doc = re.sub(r"[0-9]", "", document)
+    print("remove numbers: ", doc)
+    return doc
 
 
+# loại bỏ khoảng trắng thừa
+def remove_spaces(document):
+    doc = re.sub(r"\s+", " ", document, flags=re.I)
+    print("remove spaces: ", doc)
+    return doc
 
-def normalizer_sentences(string):
-    string = string.lower()
+def preprocessing_doc(doc):
+    doc = word_segmentation(doc)
+    doc = remove_punctuation_marks(doc)
+    # doc = remove_stop_words(doc)
+    doc = remove_numbers(doc)
+    doc = remove_spaces(doc)
+    return doc
 
-    # gỡ các ký hiệu sản phẩm không liên quan
-    string = string.replace('-', '')
-    string = string.replace('in.', 'inch')
-    string = string.replace('ft.', 'foot')
-    string = string.replace('-oz. ', ' ')
-    string = string.replace('oz.', ' ')
-    string = string.replace('sq.', ' ')
-    string = string.replace('Gal.', ' ')
-    string = string.replace('lb.', ' ')
-    string = string.replace('cu.', ' ')
-    string = string.replace('O.D.', ' ')
-    string = string.replace('sq.', ' ')
-    string = string.replace('st.', ' ')
-    string = string.replace('lb.', ' ')
-    string = string.replace('Dia.', ' ')
-    string = string.replace('dia.', ' ')
+def preprocessing(source):
+    data =[]
+    for doc in source:
+        doc = preprocessing_doc(doc)
+        data.append(doc)
+    return data
 
-    # Thay thế tất cả các ký tự đặc biệc bằng 1 space
-    string = re.sub(r'[^a-zA-Z0-9]+', ' ', string)
+# CHECK PLAGIARISM
+def check_plagiarism_with_threshold(value, threshold):
+    if value>=threshold:
+        print("WARNING: THIS DOCUMENT IS PLAGIARIZED")
+        return True
+    return False
 
-    # Thay thế các ký tự đứng một mình bằng 1 space
-    string = re.sub(r'\b[a-zA-Z]\b', ' ', string)
+# FOR ENGLISH
+def preprocessing_english(text):
+    stop_words = set(stopwords.words('english'))
 
-    # Gộp các space đứng liền nhau thành 1 space
-    string = re.sub(r'\s+', ' ', string)
+    text_tokens = word_tokenize(text)
+    # print(text_tokens)
 
-    return string
-
-def normalizer_search_term(string):
-    # Remove all the special characters
-    string = re.sub(r'\W', ' ', string)
-
-    # remove all single characters
-    string = re.sub(r'\s+[a-zA-Z]\s+', ' ', string)
-
-    # Remove single characters from the start
-    string = re.sub(r'\^[a-zA-Z]\s+', ' ', string)
-
-    # Substituting multiple spaces with single space
-    string = re.sub(r'\s+', ' ', string, flags=re.I)
-
-    # Removing prefixed 'b'
-    string = re.sub(r'^b\s+', '', string)
+    # for word in text_tokens_without_pm:
+    #     if word in stopwords.words():
+    tokens_without_sw_aray = [w for w in text_tokens if not w.lower() in stop_words]
+    tokens_without_sw = ' '.join(tokens_without_sw_aray)
     
-    # Converting to Lowercase
-    string = string.lower()
-    
-    # Lemmatization
-    string = string.split()
+    text_tokens_without_pm = re.sub(r"\W", " ", tokens_without_sw)
 
-    string = [stemmer.lemmatize(word) for word in string]
-    string = ' '.join(string)
+    tokens_without_num = re.sub(r"[0-9]", "", text_tokens_without_pm)
 
-    return string
+    tokens_remove_spaces = re.sub(r"\s+", " ", tokens_without_num, flags=re.I)
 
-# Đưa các từ về từ gốc của nó.
-# ta sẽ thực áp dụng hàm này cho cả 3 trường title, search_term và des_attr
-def get_root_form(string):
-    lemmatizer = WordNetLemmatizer()
-    # return ' '.join(map(lambda x: stemmer.stem(x), string.split())) # kỹ thuật stemmer
-    # return ' '.join(map(lambda x: lemmatizer.lemmatize(x), string.split())) # kỹ thuật lemmatizer
-    return ' '.join(map(lambda x: lemmatizer.lemmatize(x), list(map(lambda x: stemmer.stem(x), string.split()))))  # sử dụng cả 2 kỹ thuật
-
-# Tìm các tokens chung 
-# tách tokens của 2 câu bằng hàm split()
-# rồi lần lượt tính sự xuất hiện của tokens ở câu 1 trong câu 2
-def str_common_tokens(sentence_1, sentence_2):
-    # return sum(1 for word in str(sentence_2).split() if word in set(str(sentence_1).split()))
-    return len(set(sentence_1.split()).intersection(sentence_2.split()))
-
-# Các từ chung một phần nào đấy
-# dể lấy các từ chung một phần thì ta không tách tokens (ko dùng hàm split() ở đây)
-# lần lượt tính sự xuất hiện của các từ trong câu 1 ở câu 2
-def str_common_word(sentence_1, sentence_2):
-    return sum(1 for word in str(sentence_2) if word in set(sentence_1))
-
-# Tính tổng tất cả các Tokens xuất hiện "toàn phần"
-def get_shared_words_whole(row_data):
-    return str_common_tokens(row_data[0], row_data[1])
-
-# Tính tổng tất cả các Từ xuất hiện "một phần"
-def get_shared_words_part(row_data):
-    return str_common_word(row_data[0], row_data[1])
-
+    return tokens_remove_spaces
